@@ -4,6 +4,7 @@
 #ifndef JL_THREADS_H
 #define JL_THREADS_H
 
+#include "work-stealing-queue.h"
 #include "julia_atomics.h"
 #ifndef _OS_WINDOWS_
 #include "pthread.h"
@@ -171,12 +172,9 @@ typedef struct {
 } jl_thread_heap_t;
 
 typedef struct {
-    struct _jl_gc_chunk_t *chunk_start;
-    struct _jl_gc_chunk_t *current_chunk;
-    struct _jl_gc_chunk_t *chunk_end;
-    struct _jl_value_t **start;
-    struct _jl_value_t **current;
-    struct _jl_value_t **end;
+    ws_queue_t chunk_queue;
+    ws_queue_t ptr_queue;
+    arraylist_t reclaim_set;
 } jl_gc_markqueue_t;
 
 typedef struct {
@@ -365,6 +363,7 @@ JL_DLLEXPORT void jl_gc_disable_finalizers_internal(void);
 JL_DLLEXPORT void jl_gc_enable_finalizers_internal(void);
 JL_DLLEXPORT void jl_gc_run_pending_finalizers(struct _jl_task_t *ct);
 extern JL_DLLEXPORT _Atomic(int) jl_gc_have_pending_finalizers;
+JL_DLLEXPORT int8_t jl_gc_is_in_finalizer(void);
 
 JL_DLLEXPORT void jl_wakeup_thread(int16_t tid);
 

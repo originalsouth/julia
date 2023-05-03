@@ -334,17 +334,6 @@ macro locals()
     return Expr(:locals)
 end
 
-"""
-    objectid(x) -> UInt
-
-Get a hash value for `x` based on object identity.
-
-If `x === y` then `objectid(x) == objectid(y)`, and usually when `x !== y`, `objectid(x) != objectid(y)`.
-
-See also [`hash`](@ref), [`IdDict`](@ref).
-"""
-objectid(@nospecialize(x)) = ccall(:jl_object_id, UInt, (Any,), x)
-
 # concrete datatype predicates
 
 datatype_fieldtypes(x::DataType) = ccall(:jl_get_fieldtypes, Core.SimpleVector, (Any,), x)
@@ -599,6 +588,28 @@ isbitstype(@nospecialize t) = (@_total_meta; isa(t, DataType) && (t.flags & 0x00
 Return `true` if `x` is an instance of an [`isbitstype`](@ref) type.
 """
 isbits(@nospecialize x) = isbitstype(typeof(x))
+
+"""
+    objectid(x) -> UInt
+
+Get a hash value for `x` based on object identity.
+
+If `x === y` then `objectid(x) == objectid(y)`, and usually when `x !== y`, `objectid(x) != objectid(y)`.
+
+See also [`hash`](@ref), [`IdDict`](@ref).
+"""
+function objectid(x)
+    # objectid is foldable iff it isn't a pointer.
+    if isidentityfree(typeof(x))
+        return _foldable_objectid(x)
+    end
+    return _objectid(x)
+end
+function _foldable_objectid(@nospecialize(x))
+    @_foldable_meta
+    _objectid(x)
+end
+_objectid(@nospecialize(x)) = ccall(:jl_object_id, UInt, (Any,), x)
 
 """
     isdispatchtuple(T)
@@ -1073,29 +1084,31 @@ function visit(f, mt::Core.MethodTable)
     nothing
 end
 function visit(f, mc::Core.TypeMapLevel)
-    if mc.targ !== nothing
-        e = mc.targ::Vector{Any}
+    function avisit(f, e::Array{Any,1})
         for i in 2:2:length(e)
-            isassigned(e, i) && visit(f, e[i])
+            isassigned(e, i) || continue
+            ei = e[i]
+            if ei isa Vector{Any}
+                for j in 2:2:length(ei)
+                    isassigned(ei, j) || continue
+                    visit(f, ei[j])
+                end
+            else
+                visit(f, ei)
+            end
         end
+    end
+    if mc.targ !== nothing
+        avisit(f, mc.targ::Vector{Any})
     end
     if mc.arg1 !== nothing
-        e = mc.arg1::Vector{Any}
-        for i in 2:2:length(e)
-            isassigned(e, i) && visit(f, e[i])
-        end
+        avisit(f, mc.arg1::Vector{Any})
     end
     if mc.tname !== nothing
-        e = mc.tname::Vector{Any}
-        for i in 2:2:length(e)
-            isassigned(e, i) && visit(f, e[i])
-        end
+        avisit(f, mc.tname::Vector{Any})
     end
     if mc.name1 !== nothing
-        e = mc.name1::Vector{Any}
-        for i in 2:2:length(e)
-            isassigned(e, i) && visit(f, e[i])
-        end
+        avisit(f, mc.name1::Vector{Any})
     end
     mc.list !== nothing && visit(f, mc.list)
     mc.any !== nothing && visit(f, mc.any)
@@ -1108,6 +1121,34 @@ function visit(f, d::Core.TypeMapEntry)
     end
     nothing
 end
+struct MethodSpecializations
+    specializations::Union{Nothing, Core.MethodInstance, Core.SimpleVector}
+end
+"""
+    specializations(m::Method) → itr
+
+Return an iterator `itr` of all compiler-generated specializations of `m`.
+"""
+specializations(m::Method) = MethodSpecializations(isdefined(m, :specializations) ? m.specializations : nothing)
+function iterate(specs::MethodSpecializations)
+    s = specs.specializations
+    s === nothing && return nothing
+    isa(s, Core.MethodInstance) && return (s, nothing)
+    return iterate(specs, 0)
+end
+iterate(specs::MethodSpecializations, ::Nothing) = nothing
+function iterate(specs::MethodSpecializations, i::Int)
+    s = specs.specializations::Core.SimpleVector
+    n = length(s)
+    i >= n && return nothing
+    item = nothing
+    while i < n && item === nothing
+        item = s[i+=1]
+    end
+    item === nothing && return nothing
+    return (item, i)
+end
+length(specs::MethodSpecializations) = count(Returns(true), specs)
 
 function length(mt::Core.MethodTable)
     n = 0
@@ -1564,6 +1605,7 @@ function _which(@nospecialize(tt::Type);
     method_table::Union{Nothing,Core.MethodTable,Core.Compiler.MethodTableView}=nothing,
     world::UInt=get_world_counter(),
     raise::Bool=true)
+    world == typemax(UInt) && error("code reflection cannot be used from generated functions")
     if method_table === nothing
         table = Core.Compiler.InternalMethodTable(world)
     elseif method_table isa Core.MethodTable
@@ -1710,7 +1752,7 @@ function hasmethod(@nospecialize(f), @nospecialize(t))
     return Core._hasmethod(f, t isa Type ? t : to_tuple_type(t))
 end
 
-function Core.kwcall(kwargs, ::typeof(hasmethod), @nospecialize(f), @nospecialize(t))
+function Core.kwcall(kwargs::NamedTuple, ::typeof(hasmethod), @nospecialize(f), @nospecialize(t))
     world = kwargs.world::UInt # make sure this is the only local, to avoid confusing kwarg_decl()
     return ccall(:jl_gf_invoke_lookup, Any, (Any, Any, UInt), signature_type(f, t), nothing, world) !== nothing
 end
@@ -1721,7 +1763,7 @@ function hasmethod(f, t, kwnames::Tuple{Vararg{Symbol}}; world::UInt=get_world_c
     t = to_tuple_type(t)
     ft = Core.Typeof(f)
     u = unwrap_unionall(t)::DataType
-    tt = rewrap_unionall(Tuple{typeof(Core.kwcall), typeof(pairs((;))), ft, u.parameters...}, t)
+    tt = rewrap_unionall(Tuple{typeof(Core.kwcall), NamedTuple, ft, u.parameters...}, t)
     match = ccall(:jl_gf_invoke_lookup, Any, (Any, Any, UInt), tt, nothing, world)
     match === nothing && return false
     kws = ccall(:jl_uncompress_argnames, Array{Symbol,1}, (Any,), (match::Method).slot_syms)

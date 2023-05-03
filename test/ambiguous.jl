@@ -46,8 +46,8 @@ let err = try
     @test occursin("Possible fix, define\n  ambig(::Integer, ::Integer)", errstr)
 end
 
-ambig_with_bounds(x, ::Int, ::T) where {T<:Integer,S} = 0
-ambig_with_bounds(::Int, x, ::T) where {T<:Integer,S} = 1
+@test_warn "declares type variable S but does not use it" @eval ambig_with_bounds(x, ::Int, ::T) where {T<:Integer,S} = 0
+@test_warn "declares type variable S but does not use it" @eval ambig_with_bounds(::Int, x, ::T) where {T<:Integer,S} = 1
 let err = try
               ambig_with_bounds(1, 2, 3)
           catch _e_
@@ -177,12 +177,10 @@ ambs = detect_ambiguities(Ambig48312)
         @test good
     end
 
-    # some ambiguities involving Union{} type parameters are expected, but not required
+    # some ambiguities involving Union{} type parameters may be expected, but not required
     let ambig = Set(detect_ambiguities(Core; recursive=true, ambiguous_bottom=true))
-        m1 = which(Core.Compiler.convert, Tuple{Type{<:Core.IntrinsicFunction}, Any})
-        m2 = which(Core.Compiler.convert, Tuple{Type{<:Nothing}, Any})
-        pop!(ambig, (m1, m2))
         @test !isempty(ambig)
+        @test length(ambig) < 30
     end
 
     STDLIB_DIR = Sys.STDLIB
@@ -385,7 +383,7 @@ f11407(::Dict{K,V}, ::Dict{Any,V}) where {K,V} = 1
 f11407(::Dict{K,V}, ::Dict{K,Any}) where {K,V} = 2
 @test_throws MethodError f11407(Dict{Any,Any}(), Dict{Any,Any}()) # ambiguous
 @test f11407(Dict{Any,Int}(), Dict{Any,Int}()) == 1
-f11407(::Dict{Any,Any}, ::Dict{Any,Any}) where {K,V} = 3
+@test_warn "declares type variable V but does not use it" @eval f11407(::Dict{Any,Any}, ::Dict{Any,Any}) where {K,V} = 3
 @test f11407(Dict{Any,Any}(), Dict{Any,Any}()) == 3
 
 # issue #12814
@@ -399,8 +397,9 @@ end
 
 # issue #43040
 module M43040
+   using Test
    struct C end
-   stripType(::Type{C}) where {T} = C # where {T} is intentionally incorrect
+   @test_warn "declares type variable T but does not use it" @eval M43040 stripType(::Type{C}) where {T} = C # where {T} is intentionally incorrect
 end
 
 @test isempty(detect_ambiguities(M43040; recursive=true))
