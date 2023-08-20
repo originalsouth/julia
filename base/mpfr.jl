@@ -19,6 +19,8 @@ import
         isone, big, _string_n, decompose, minmax,
         sinpi, cospi, sincospi, tanpi, sind, cosd, tand, asind, acosd, atand
 
+
+using .Base.Libc
 import ..Rounding: rounding_raw, setrounding_raw
 
 import ..GMP: ClongMax, CulongMax, CdoubleMax, Limb, libgmp
@@ -92,6 +94,12 @@ const DEFAULT_PRECISION = Ref{Clong}(256)
 
 # Basic type and initialization definitions
 
+# Warning: the constants are MPFR implementation details from
+# `src/mpfr-impl.h`, search for `MPFR_EXP_ZERO`.
+const mpfr_special_exponent_zero = typemin(Clong) + true
+const mpfr_special_exponent_nan = mpfr_special_exponent_zero + true
+const mpfr_special_exponent_inf = mpfr_special_exponent_nan + true
+
 """
     BigFloat <: AbstractFloat
 
@@ -123,7 +131,7 @@ mutable struct BigFloat <: AbstractFloat
         nb = (nb + Core.sizeof(Limb) - 1) ÷ Core.sizeof(Limb) # align to number of Limb allocations required for this
         #d = Vector{Limb}(undef, nb)
         d = _string_n(nb * Core.sizeof(Limb))
-        EXP_NAN = Clong(1) - Clong(typemax(Culong) >> 1)
+        EXP_NAN = mpfr_special_exponent_nan
         return _BigFloat(Clong(precision), one(Cint), EXP_NAN, d) # +NAN
     end
 end
@@ -232,11 +240,11 @@ function BigFloat(x::Float64, r::MPFRRoundingMode=ROUNDING_MODE[]; precision::In
     z.sign = 1-2*signbit(x)
     if iszero(x) || !isfinite(x)
         if isinf(x)
-            z.exp = Clong(2) - typemax(Clong)
+            z.exp = mpfr_special_exponent_inf
         elseif isnan(x)
-            z.exp = Clong(1) - typemax(Clong)
+            z.exp = mpfr_special_exponent_nan
         else
-            z.exp = - typemax(Clong)
+            z.exp = mpfr_special_exponent_zero
         end
         return z
     end
@@ -883,7 +891,10 @@ cmp(x::CdoubleMax, y::BigFloat) = -cmp(y,x)
 <=(x::BigFloat, y::CdoubleMax) = !isnan(x) && !isnan(y) && cmp(x,y) <= 0
 <=(x::CdoubleMax, y::BigFloat) = !isnan(x) && !isnan(y) && cmp(y,x) >= 0
 
-signbit(x::BigFloat) = ccall((:mpfr_signbit, libmpfr), Int32, (Ref{BigFloat},), x) != 0
+# Note: this inlines the implementation of `mpfr_signbit` to avoid a
+# `ccall`.
+signbit(x::BigFloat) = signbit(x.sign)
+
 function sign(x::BigFloat)
     c = cmp(x, 0)
     (c == 0 || isnan(x)) && return x
@@ -974,16 +985,16 @@ for (f,R) in ((:roundeven, :Nearest),
 end
 
 function isinf(x::BigFloat)
-    return ccall((:mpfr_inf_p, libmpfr), Int32, (Ref{BigFloat},), x) != 0
+    return x.exp == mpfr_special_exponent_inf
 end
 
 function isnan(x::BigFloat)
-    return ccall((:mpfr_nan_p, libmpfr), Int32, (Ref{BigFloat},), x) != 0
+    return x.exp == mpfr_special_exponent_nan
 end
 
 isfinite(x::BigFloat) = !isinf(x) && !isnan(x)
 
-iszero(x::BigFloat) = x == Clong(0)
+iszero(x::BigFloat) = x.exp == mpfr_special_exponent_zero
 isone(x::BigFloat) = x == Clong(1)
 
 @eval typemax(::Type{BigFloat}) = $(BigFloat(Inf))
@@ -1140,7 +1151,7 @@ function decompose(x::BigFloat)::Tuple{BigInt, Int, Int}
     s.size = cld(x.prec, 8*sizeof(Limb)) # limbs
     b = s.size * sizeof(Limb)            # bytes
     ccall((:__gmpz_realloc2, libgmp), Cvoid, (Ref{BigInt}, Culong), s, 8b) # bits
-    ccall(:memcpy, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t), s.d, x.d, b) # bytes
+    memcpy(s.d, x.d, b)
     s, x.exp - 8b, x.sign
 end
 

@@ -1,4 +1,4 @@
-# Command-line Interface
+# [Command-line Interface](@id cli)
 
 ## Using arguments inside scripts
 
@@ -69,7 +69,7 @@ Note that although you should have a `~/.julia` directory once you've run Julia 
 first time, you may need to create the `~/.julia/config` folder and the
 `~/.julia/config/startup.jl` file if you use it.
 
-To have startup code run only in [The Julia REPL] (and not when `julia` is *e.g.* run
+To have startup code run only in [The Julia REPL](@ref) (and not when `julia` is *e.g.* run
 on a script), use [`atreplinit`](@ref) in `startup.jl`:
 
 ```julia
@@ -95,13 +95,13 @@ The following is a complete list of command-line switches available when launchi
 |`-v`, `--version`                      |Display version information|
 |`-h`, `--help`                         |Print command-line options (this message).|
 |`--help-hidden`                        |Uncommon options not shown by `-h`|
-|`--project[={<dir>\|@.}]`              |Set `<dir>` as the home project/environment. The default `@.` option will search through parent directories until a `Project.toml` or `JuliaProject.toml` file is found.|
+|`--project[={<dir>\|@.}]`              |Set `<dir>` as the active project/environment. The default `@.` option will search through parent directories until a `Project.toml` or `JuliaProject.toml` file is found.|
 |`-J`, `--sysimage <file>`              |Start up with the given system image file|
 |`-H`, `--home <dir>`                   |Set location of `julia` executable|
 |`--startup-file={yes*\|no}`            |Load `JULIA_DEPOT_PATH/config/startup.jl`; if `JULIA_DEPOT_PATH` environment variable is unset, load `~/.julia/config/startup.jl`|
 |`--handle-signals={yes*\|no}`          |Enable or disable Julia's default signal handlers|
 |`--sysimage-native-code={yes*\|no}`    |Use native code from system image if available|
-|`--compiled-modules={yes*\|no}`        |Enable or disable incremental precompilation of modules|
+|`--compiled-modules={yes*\|no|existing}` |Enable or disable incremental precompilation of modules. The `existing` option allows use of existing compiled modules that were previously precompiled, but disallows creation of new precompile files.|
 |`--pkgimages={yes*\|no}`               |Enable or disable usage of native code caching in the form of pkgimages|
 |`-e`, `--eval <expr>`                  |Evaluate `<expr>`|
 |`-E`, `--print <expr>`                 |Evaluate `<expr>` and display the result|
